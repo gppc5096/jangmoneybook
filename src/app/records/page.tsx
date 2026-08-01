@@ -1,10 +1,11 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import { Check, Pencil, Trash2, X } from 'lucide-react';
+import { Check, ChevronLeft, ChevronRight, Pencil, Trash2, X } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
 import { CategoryBadge } from '@/components/CategoryBadge';
 import { CategoryPicker } from '@/components/CategoryPicker';
 import { DataStatus } from '@/components/DataStatus';
@@ -16,6 +17,7 @@ import {
   formatSigned,
   monthKey,
   monthLabel,
+  shiftMonth,
   subCategoryName,
   summarize,
 } from '@/lib/format';
@@ -58,13 +60,13 @@ export default function RecordsPage() {
   const [draft, setDraft] = useState<EditDraft | null>(null);
   const [editError, setEditError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [pickerYear, setPickerYear] = useState(() => Number(currentMonthKey().slice(0, 4)));
 
-  // 거래가 있는 달 + 이번 달을 최신순 탭으로 노출한다.
-  const months = useMemo(() => {
-    const set = new Set(transactions.map((t) => monthKey(t.date)));
-    set.add(currentMonthKey());
-    return [...set].sort().reverse();
-  }, [transactions]);
+  function openMonthPicker() {
+    setPickerYear(Number(month.slice(0, 4)));
+    setPickerOpen(true);
+  }
 
   const monthTransactions = useMemo(
     () => transactions.filter((t) => monthKey(t.date) === month),
@@ -156,26 +158,92 @@ export default function RecordsPage() {
 
       <DataStatus />
 
-      <div className="-mx-4 overflow-x-auto px-4">
-        <div className="flex gap-2 pb-1">
-          {months.map((m) => (
-            <button
-              key={m}
-              type="button"
-              aria-pressed={m === month}
-              onClick={() => setMonth(m)}
-              className={cn(
-                'h-11 shrink-0 rounded-full border px-4 text-sm font-medium transition-colors',
-                m === month
-                  ? 'border-primary bg-primary text-primary-foreground'
-                  : 'border-input text-muted-foreground',
-              )}
-            >
-              {monthLabel(m)}
-            </button>
-          ))}
-        </div>
+      <div className="flex items-center justify-between gap-2">
+        <Button
+          type="button"
+          variant="outline"
+          size="icon"
+          className="size-11 shrink-0"
+          aria-label="이전 달"
+          onClick={() => setMonth((m) => shiftMonth(m, -1))}
+        >
+          <ChevronLeft className="size-5" aria-hidden />
+        </Button>
+        <button
+          type="button"
+          onClick={openMonthPicker}
+          className="h-11 flex-1 rounded-full border border-input text-base font-semibold transition-colors hover:bg-accent"
+        >
+          {monthLabel(month)}
+        </button>
+        <Button
+          type="button"
+          variant="outline"
+          size="icon"
+          className="size-11 shrink-0"
+          aria-label="다음 달"
+          onClick={() => setMonth((m) => shiftMonth(m, 1))}
+        >
+          <ChevronRight className="size-5" aria-hidden />
+        </Button>
       </div>
+
+      <Dialog open={pickerOpen} onOpenChange={setPickerOpen}>
+        <DialogContent className="gap-4">
+          <DialogTitle>년/월 선택</DialogTitle>
+          <DialogDescription className="sr-only">
+            조회할 연도와 월을 선택합니다.
+          </DialogDescription>
+
+          <div className="flex items-center justify-between">
+            <Button
+              type="button"
+              variant="outline"
+              size="icon"
+              aria-label="이전 연도"
+              onClick={() => setPickerYear((y) => y - 1)}
+            >
+              <ChevronLeft className="size-4" aria-hidden />
+            </Button>
+            <p className="text-lg font-semibold">{pickerYear}년</p>
+            <Button
+              type="button"
+              variant="outline"
+              size="icon"
+              aria-label="다음 연도"
+              onClick={() => setPickerYear((y) => y + 1)}
+            >
+              <ChevronRight className="size-4" aria-hidden />
+            </Button>
+          </div>
+
+          <div className="grid grid-cols-4 gap-2">
+            {Array.from({ length: 12 }, (_, i) => {
+              const key = `${pickerYear}-${String(i + 1).padStart(2, '0')}`;
+              const active = key === month;
+              return (
+                <button
+                  key={key}
+                  type="button"
+                  aria-pressed={active}
+                  onClick={() => {
+                    setMonth(key);
+                    setPickerOpen(false);
+                  }}
+                  className={cn(
+                    'h-12 rounded-md border text-sm font-medium transition-colors',
+                    active
+                      ? 'border-primary bg-primary text-primary-foreground'
+                      : 'border-input',
+                  )}
+                >
+                  {i + 1}월
+                </button>
+              );
+            })}
+          </div>
+        </DialogContent>
+      </Dialog>
 
       <Card className="sticky top-0 z-10">
         <CardContent className="grid grid-cols-3 gap-2 p-4 text-center">
