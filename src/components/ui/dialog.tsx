@@ -22,17 +22,25 @@ const DialogOverlay = React.forwardRef<
 ));
 DialogOverlay.displayName = DialogPrimitive.Overlay.displayName;
 
-/** 하단에서 올라오는 바텀시트 형태의 다이얼로그 */
+/**
+ * 기본(sheet)은 하단에서 올라오는 바텀시트, center 는 화면 정중앙에 뜨는 일반 모달.
+ * 큰 입력 폼(거래 입력)은 sheet, 짧은 선택창(년/월 선택 등)은 center 를 쓴다.
+ */
 const DialogContent = React.forwardRef<
   React.ElementRef<typeof DialogPrimitive.Content>,
-  React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content>
->(({ className, children, ...props }, ref) => (
+  React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content> & {
+    variant?: 'sheet' | 'center';
+  }
+>(({ className, children, variant = 'sheet', ...props }, ref) => (
   <DialogPortal>
     <DialogOverlay />
     <DialogPrimitive.Content
       ref={ref}
       className={cn(
-        'fixed inset-x-0 bottom-0 z-50 mx-auto flex max-h-[90dvh] max-w-md flex-col overflow-y-auto rounded-t-2xl border bg-background p-5 pb-[calc(1.25rem+env(safe-area-inset-bottom))] shadow-lg focus:outline-none',
+        'fixed z-50 flex flex-col overflow-y-auto border bg-background shadow-lg focus:outline-none',
+        variant === 'sheet'
+          ? 'inset-x-0 bottom-0 mx-auto max-h-[90dvh] max-w-md rounded-t-2xl p-5 pb-[calc(1.25rem+env(safe-area-inset-bottom))]'
+          : 'left-1/2 top-1/2 w-[calc(100%-2rem)] max-w-md -translate-x-1/2 -translate-y-1/2 rounded-2xl p-5',
         className,
       )}
       {...props}

@@ -189,7 +189,7 @@ export default function RecordsPage() {
       </div>
 
       <Dialog open={pickerOpen} onOpenChange={setPickerOpen}>
-        <DialogContent className="gap-4">
+        <DialogContent variant="center" className="gap-4">
           <DialogTitle>년/월 선택</DialogTitle>
           <DialogDescription className="sr-only">
             조회할 연도와 월을 선택합니다.
@@ -420,14 +420,16 @@ export default function RecordsPage() {
 
             return (
               <li key={tx.id} className="flex items-center gap-3 p-3">
-                <div className="min-w-0 flex-1">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="text-xs tabular-nums text-muted-foreground">{tx.date}</span>
-                    <CategoryBadge name={label.name} color={label.color} />
-                    {sub && <span className="text-xs text-muted-foreground">{sub}</span>}
-                  </div>
-                  {tx.note && <p className="mt-1 truncate text-sm">{tx.note}</p>}
-                </div>
+                <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
+                  {tx.date}
+                </span>
+                <CategoryBadge name={label.name} color={label.color} />
+                {sub && (
+                  <span className="hidden shrink-0 text-xs text-muted-foreground sm:inline">
+                    {sub}
+                  </span>
+                )}
+                <p className="min-w-0 flex-1 truncate text-sm">{tx.note}</p>
                 <p
                   className={cn(
                     'shrink-0 text-base font-semibold tabular-nums',
