@@ -1,0 +1,63 @@
+# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
+
+# dependencies
+/node_modules
+/.pnp
+.pnp.*
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/versions
+
+# testing
+/coverage
+
+# next.js
+/.next/
+/out/
+
+# production
+/build
+
+# misc
+.DS_Store
+*.pem
+
+# debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# env files (can opt-in for committing if needed)
+.env*
+
+# vercel
+.vercel
+
+# typescript
+*.tsbuildinfo
+next-env.d.ts
+
+# 로컬 전용 기획 문서 — 배포/저장소에 포함하지 않음 (실제 계정/키 값 포함)
+docs/가계부_PRD*.docx
+
+# 테스트용 영수증 원본 이미지 — 개인 결제 정보 포함, 저장소에 포함하지 않음
+docs/*.jpg
+docs/*.jpeg
+docs/*.png
+
+# OMC 로컬 세션/도구 상태 — 저장소에 포함하지 않음
+.omc/
+
+# env 예시 파일은 커밋
+!.env.example
+
+# next-pwa 생성물
+/public/sw.js
+/public/sw.js.map
+/public/workbox-*.js
+/public/workbox-*.js.map
+/public/fallback-*.js
+/public/swe-worker-*.js
