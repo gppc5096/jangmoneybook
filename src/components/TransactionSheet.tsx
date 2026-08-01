@@ -224,7 +224,7 @@ export function TransactionSheet({
 
       if (!res.ok) {
         const body = await res.json().catch(() => null);
-        throw new Error(body?.error ?? '영수증 분석에 실패했습니다.');
+        throw new Error(body?.error ?? `영수증 분석에 실패했습니다. (오류 코드: ${res.status})`);
       }
 
       const result: OcrResult = await res.json();
