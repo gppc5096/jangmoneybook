@@ -62,6 +62,8 @@ export default function RecordsPage() {
   const [saving, setSaving] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [pickerYear, setPickerYear] = useState(() => Number(currentMonthKey().slice(0, 4)));
+  const [deleteTargetId, setDeleteTargetId] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   function openMonthPicker() {
     setPickerYear(Number(month.slice(0, 4)));
@@ -85,9 +87,24 @@ export default function RecordsPage() {
     });
   }, [monthTransactions, keyword, typeFilter, categoryFilter]);
 
-  async function handleDelete(id: string) {
-    if (!window.confirm('이 거래를 삭제할까요?')) return;
-    await deleteTransaction(id);
+  const deleteTarget = useMemo(
+    () => transactions.find((t) => t.id === deleteTargetId) ?? null,
+    [transactions, deleteTargetId],
+  );
+
+  function handleDelete(id: string) {
+    setDeleteTargetId(id);
+  }
+
+  async function confirmDelete() {
+    if (!deleteTargetId) return;
+    setDeleting(true);
+    try {
+      await deleteTransaction(deleteTargetId);
+      setDeleteTargetId(null);
+    } finally {
+      setDeleting(false);
+    }
   }
 
   function startEdit(tx: Transaction) {
@@ -241,6 +258,38 @@ export default function RecordsPage() {
                 </button>
               );
             })}
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={deleteTargetId !== null} onOpenChange={(open) => !open && setDeleteTargetId(null)}>
+        <DialogContent variant="center" className="gap-4">
+          <DialogTitle>거래 삭제</DialogTitle>
+          <DialogDescription>
+            {deleteTarget
+              ? `"${deleteTarget.note || categoryLabel(categories, deleteTarget.categoryId).name}" (${formatSigned(deleteTarget.type, deleteTarget.amount)}) 거래를 삭제할까요? 이 작업은 되돌릴 수 없습니다.`
+              : '이 거래를 삭제할까요? 이 작업은 되돌릴 수 없습니다.'}
+          </DialogDescription>
+
+          <div className="flex gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              className="h-11 flex-1"
+              disabled={deleting}
+              onClick={() => setDeleteTargetId(null)}
+            >
+              취소
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              className="h-11 flex-1"
+              disabled={deleting}
+              onClick={confirmDelete}
+            >
+              {deleting ? '삭제하는 중…' : '삭제'}
+            </Button>
           </div>
         </DialogContent>
       </Dialog>
