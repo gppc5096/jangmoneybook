@@ -32,6 +32,7 @@ interface EditDraft {
   categoryId: string;
   subCategoryId: string | null;
   amountText: string;
+  itemName: string;
   note: string;
 }
 
@@ -42,6 +43,7 @@ function toDraft(tx: Transaction): EditDraft {
     categoryId: tx.categoryId,
     subCategoryId: tx.subCategoryId,
     amountText: formatAmount(tx.amount),
+    itemName: tx.itemName ?? '',
     note: tx.note ?? '',
   };
 }
@@ -94,7 +96,7 @@ export default function RecordsPage() {
     return monthTransactions.filter((t) => {
       if (typeFilter !== 'all' && t.type !== typeFilter) return false;
       if (categoryFilter !== 'all' && t.categoryId !== categoryFilter) return false;
-      if (q && !(t.note ?? '').toLowerCase().includes(q)) return false;
+      if (q && !`${t.itemName ?? ''} ${t.note ?? ''}`.toLowerCase().includes(q)) return false;
       return true;
     });
   }, [monthTransactions, keyword, typeFilter, categoryFilter]);
@@ -171,6 +173,7 @@ export default function RecordsPage() {
         categoryId: draft.categoryId,
         subCategoryId: draft.subCategoryId,
         amount,
+        itemName: draft.itemName.trim() || null,
         note: draft.note.trim() || null,
       });
       cancelEdit();
@@ -304,7 +307,7 @@ export default function RecordsPage() {
           <DialogTitle>거래 삭제</DialogTitle>
           <DialogDescription>
             {deleteTarget
-              ? `"${deleteTarget.note || categoryLabel(categories, deleteTarget.categoryId).name}" (${formatSigned(deleteTarget.type, deleteTarget.amount)}) 거래를 삭제할까요? 이 작업은 되돌릴 수 없습니다.`
+              ? `"${deleteTarget.itemName || categoryLabel(categories, deleteTarget.categoryId).name}" (${formatSigned(deleteTarget.type, deleteTarget.amount)}) 거래를 삭제할까요? 이 작업은 되돌릴 수 없습니다.`
               : '이 거래를 삭제할까요? 이 작업은 되돌릴 수 없습니다.'}
           </DialogDescription>
 
@@ -358,8 +361,8 @@ export default function RecordsPage() {
         <Input
           value={keyword}
           onChange={(e) => setKeyword(e.target.value)}
-          placeholder="비고 검색"
-          aria-label="비고 검색"
+          placeholder="항목명 검색"
+          aria-label="항목명 검색"
           className="h-11"
         />
         <div className="flex gap-2">
@@ -465,6 +468,17 @@ export default function RecordsPage() {
                   />
 
                   <Input
+                    aria-label="구입 항목명"
+                    placeholder="구입 항목명"
+                    value={draft.itemName}
+                    maxLength={50}
+                    onChange={(e) =>
+                      setDraft((prev) => (prev ? { ...prev, itemName: e.target.value } : prev))
+                    }
+                    className="h-12 text-base"
+                  />
+
+                  <Input
                     aria-label="비고"
                     placeholder="비고"
                     value={draft.note}
@@ -515,7 +529,7 @@ export default function RecordsPage() {
                     {sub}
                   </span>
                 )}
-                <p className="min-w-0 flex-1 truncate text-sm">{tx.note}</p>
+                <p className="min-w-0 flex-1 truncate text-sm">{tx.itemName}</p>
                 <p
                   className={cn(
                     'shrink-0 text-base font-semibold tabular-nums',

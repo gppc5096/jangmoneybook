@@ -29,6 +29,7 @@ const COLUMN_ALIASES = {
   type: ['구분', 'type'],
   category: ['대분류', 'category'],
   subCategory: ['소분류', 'subcategory', 'sub'],
+  itemName: ['항목명', '품목', '품목명', 'itemname', 'item'],
   amount: ['금액', 'amount'],
   note: ['비고', 'note', 'memo'],
 } as const;
@@ -77,6 +78,7 @@ export function ExcelTools() {
         구분: t.type === 'income' ? '수입' : '지출',
         대분류: categoryLabel(categories, t.categoryId).name,
         소분류: subCategoryName(categories, t.categoryId, t.subCategoryId) ?? '',
+        항목명: t.itemName ?? '',
         금액: t.amount,
         비고: t.note ?? '',
       }));
@@ -130,10 +132,13 @@ export function ExcelTools() {
 
         const subName = `${pick(row, COLUMN_ALIASES.subCategory) ?? ''}`.trim();
         const sub = category.subCategories.find((s) => s.name === subName);
+        const itemName =
+          `${pick(row, COLUMN_ALIASES.itemName) ?? ''}`.trim().slice(0, 50) || null;
         const note = `${pick(row, COLUMN_ALIASES.note) ?? ''}`.trim().slice(0, 50) || null;
 
         const duplicate = transactions.some(
-          (t) => t.date === date && t.amount === amount && (t.note ?? '') === (note ?? ''),
+          (t) =>
+            t.date === date && t.amount === amount && (t.itemName ?? '') === (itemName ?? ''),
         );
 
         return {
@@ -146,6 +151,7 @@ export function ExcelTools() {
             categoryId: category.id,
             subCategoryId: sub?.id ?? null,
             amount,
+            itemName,
             note,
             source: 'import',
           },
@@ -222,7 +228,7 @@ export function ExcelTools() {
             엑셀 파일 선택
           </Button>
           <p className="mt-2 text-xs text-muted-foreground">
-            열 이름: 날짜 / 구분 / 대분류 / 소분류 / 금액 / 비고
+            열 이름: 날짜 / 구분 / 대분류 / 소분류 / 항목명 / 금액 / 비고
           </p>
         </div>
 
@@ -241,7 +247,7 @@ export function ExcelTools() {
                   ) : (
                     <>
                       <span className="truncate">
-                        {item.input.date} · {item.categoryName} · {item.input.note ?? ''}
+                        {item.input.date} · {item.categoryName} · {item.input.itemName ?? ''}
                       </span>
                       <span className="shrink-0 tabular-nums">
                         {formatAmount(item.input.amount)}

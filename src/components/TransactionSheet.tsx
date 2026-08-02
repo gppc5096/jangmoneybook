@@ -23,13 +23,24 @@ import { formatAmount, shiftDay, todayISO } from '@/lib/format';
 import { auth } from '@/lib/firebase';
 import { cn } from '@/lib/utils';
 import { CategoryPicker } from '@/components/CategoryPicker';
-import { pickCategoryColor } from '@/lib/defaultCategories';
-import type { OcrResult, TransactionType } from '@/types';
+import { VoiceEntryPreview, type VoiceDraft } from '@/components/VoiceEntryPreview';
+import { createSuggestedCategory, type CategorySuggestion } from '@/lib/categorySuggestion';
+import type {
+  OcrResult,
+  TransactionSource,
+  TransactionType,
+  VoiceEntryItem,
+  VoiceEntryResult,
+} from '@/types';
 
+const ITEM_NAME_MAX = 50;
 const NOTE_MAX = 50;
 const OCR_MAX_DIMENSION = 1600;
 const OCR_JPEG_QUALITY = 0.7;
-const OCR_CONFIDENCE_THRESHOLD = 0.7;
+const LOW_CONFIDENCE_THRESHOLD = 0.7;
+/** 발화를 마치고 정지 탭을 잊은 경우에만 개입하는 보조 안전장치 (PRD 5-3). 문장 중간의 자연스러운 멈춤은 이 안에 들어온다. */
+const VOICE_SILENCE_TIMEOUT_MS = 9000;
+const VOICE_MAX_DURATION_MS = 60_000;
 
 /** 업로드 용량을 줄이기 위해 canvas 로 리사이즈 후 JPEG base64 로 변환한다. */
 async function resizeImageToBase64(file: File): Promise<{ base64: string; mediaType: string }> {
@@ -49,13 +60,17 @@ async function resizeImageToBase64(file: File): Promise<{ base64: string; mediaT
   return { base64: dataUrl.split(',')[1] ?? '', mediaType: 'image/jpeg' };
 }
 
+type SpeechResultLike = ArrayLike<{ transcript: string }> & { isFinal: boolean };
+
 type SpeechRecognitionLike = {
   lang: string;
+  continuous: boolean;
   interimResults: boolean;
   maxAlternatives: number;
   start: () => void;
   stop: () => void;
-  onresult: ((event: { results: ArrayLike<ArrayLike<{ transcript: string }>> }) => void) | null;
+  abort: () => void;
+  onresult: ((event: { results: ArrayLike<SpeechResultLike> }) => void) | null;
   onerror: (() => void) | null;
   onend: (() => void) | null;
 };
@@ -63,6 +78,7 @@ type SpeechRecognitionLike = {
 type SpeechWindow = Window & {
   SpeechRecognition?: new () => SpeechRecognitionLike;
   webkitSpeechRecognition?: new () => SpeechRecognitionLike;
+  webkitAudioContext?: typeof AudioContext;
 };
 
 function getSpeechRecognitionCtor() {
@@ -70,6 +86,30 @@ function getSpeechRecognitionCtor() {
   const w = window as SpeechWindow;
   return w.SpeechRecognition ?? w.webkitSpeechRecognition ?? null;
 }
+
+/** 녹음이 끝났다는 사실을 소리·진동으로 알린다 (PRD 5-3). 미지원 환경에서는 조용히 넘어간다. */
+function notifyRecordingEnd() {
+  try {
+    const Ctx = window.AudioContext ?? (window as SpeechWindow).webkitAudioContext;
+    if (Ctx) {
+      const ctx = new Ctx();
+      const oscillator = ctx.createOscillator();
+      const gain = ctx.createGain();
+      oscillator.frequency.value = 880;
+      gain.gain.value = 0.12;
+      oscillator.connect(gain);
+      gain.connect(ctx.destination);
+      oscillator.onended = () => void ctx.close();
+      oscillator.start();
+      oscillator.stop(ctx.currentTime + 0.15);
+    }
+  } catch {
+    // 소리 재생 실패는 기능에 영향이 없으므로 무시한다.
+  }
+  navigator.vibrate?.(120);
+}
+
+type VoiceStage = 'idle' | 'recording' | 'confirm' | 'parsing' | 'preview';
 
 export function TransactionSheet({
   open,
@@ -81,14 +121,13 @@ export function TransactionSheet({
   const categories = useAppStore((s) => s.categories);
   const transactions = useAppStore((s) => s.transactions);
   const addTransaction = useAppStore((s) => s.addTransaction);
-  const addCategory = useAppStore((s) => s.addCategory);
-  const updateCategory = useAppStore((s) => s.updateCategory);
 
   const [date, setDate] = useState(todayISO);
   const [type, setType] = useState<TransactionType>('expense');
   const [amountText, setAmountText] = useState('');
   const [categoryId, setCategoryId] = useState<string | null>(null);
   const [subCategoryId, setSubCategoryId] = useState<string | null>(null);
+  const [itemName, setItemName] = useState('');
   const [note, setNote] = useState('');
   const [listening, setListening] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -96,18 +135,27 @@ export function TransactionSheet({
   const [speechSupported, setSpeechSupported] = useState(false);
   const [ocrLoading, setOcrLoading] = useState(false);
   const [ocrError, setOcrError] = useState<string | null>(null);
-  const [ocrLowConfidence, setOcrLowConfidence] = useState(false);
-  const [source, setSource] = useState<'manual' | 'ocr'>('manual');
-  const [newCategorySuggestion, setNewCategorySuggestion] = useState<{
-    name: string;
-    type: TransactionType;
-    subCategories: string[];
-  } | null>(null);
+  const [lowConfidence, setLowConfidence] = useState(false);
+  const [source, setSource] = useState<TransactionSource>('manual');
+  const [newCategorySuggestion, setNewCategorySuggestion] = useState<CategorySuggestion | null>(
+    null,
+  );
   const [creatingCategory, setCreatingCategory] = useState(false);
+  const [voiceStage, setVoiceStage] = useState<VoiceStage>('idle');
+  const [voiceTranscript, setVoiceTranscript] = useState('');
+  const [voiceInterim, setVoiceInterim] = useState('');
+  const [voiceError, setVoiceError] = useState<string | null>(null);
+  const [voiceDrafts, setVoiceDrafts] = useState<VoiceDraft[]>([]);
 
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const receiptInputRef = useRef<HTMLInputElement | null>(null);
   const cameraInputRef = useRef<HTMLInputElement | null>(null);
+  const voiceRecognitionRef = useRef<SpeechRecognitionLike | null>(null);
+  const voiceSilenceTimerRef = useRef<number | null>(null);
+  const voiceMaxTimerRef = useRef<number | null>(null);
+  const voiceFinalRef = useRef('');
+  const voiceInterimRef = useRef('');
+  const voiceErrorRef = useRef<string | null>(null);
 
   useEffect(() => {
     setSpeechSupported(getSpeechRecognitionCtor() !== null);
@@ -137,17 +185,21 @@ export function TransactionSheet({
     setAmountText('');
     setCategoryId(null);
     setSubCategoryId(null);
+    setItemName('');
     setNote('');
     setError(null);
     setOcrError(null);
-    setOcrLowConfidence(false);
+    setLowConfidence(false);
     setSource('manual');
     setNewCategorySuggestion(null);
+    setVoiceError(null);
+    setVoiceDrafts([]);
   }
 
   function handleOpenChange(next: boolean) {
     if (!next) {
       recognitionRef.current?.stop();
+      closeVoiceMode();
       resetForm();
     }
     onOpenChange(next);
@@ -188,13 +240,204 @@ export function TransactionSheet({
     setListening(true);
   }
 
+  function clearVoiceTimers() {
+    if (voiceSilenceTimerRef.current !== null) window.clearTimeout(voiceSilenceTimerRef.current);
+    if (voiceMaxTimerRef.current !== null) window.clearTimeout(voiceMaxTimerRef.current);
+    voiceSilenceTimerRef.current = null;
+    voiceMaxTimerRef.current = null;
+  }
+
+  function stopVoiceRecording() {
+    clearVoiceTimers();
+    voiceRecognitionRef.current?.stop();
+  }
+
+  /** 음성 입력 모드를 닫고 폼으로 돌아간다. 진행 중이던 인식 결과는 버린다. */
+  function closeVoiceMode() {
+    clearVoiceTimers();
+    const recognition = voiceRecognitionRef.current;
+    if (recognition) {
+      recognition.onresult = null;
+      recognition.onerror = null;
+      recognition.onend = null;
+      recognition.abort();
+      voiceRecognitionRef.current = null;
+    }
+    voiceFinalRef.current = '';
+    voiceInterimRef.current = '';
+    setVoiceTranscript('');
+    setVoiceInterim('');
+    setVoiceDrafts([]);
+    setVoiceStage('idle');
+  }
+
+  function startVoiceRecording() {
+    const Ctor = getSpeechRecognitionCtor();
+    if (!Ctor) return;
+
+    closeVoiceMode();
+    voiceErrorRef.current = null;
+    setVoiceError(null);
+    setOcrError(null);
+    setVoiceStage('recording');
+
+    const recognition = new Ctor();
+    recognition.lang = 'ko-KR';
+    recognition.continuous = true;
+    recognition.interimResults = true;
+    recognition.maxAlternatives = 1;
+
+    recognition.onresult = (event) => {
+      let final = '';
+      let interim = '';
+      for (let i = 0; i < event.results.length; i += 1) {
+        const result = event.results[i];
+        const text = result[0]?.transcript ?? '';
+        if (result.isFinal) final += text;
+        else interim += text;
+      }
+      voiceFinalRef.current = final;
+      voiceInterimRef.current = interim;
+      setVoiceTranscript(final);
+      setVoiceInterim(interim);
+
+      // 말이 시작된 뒤부터만 무음 타임아웃을 건다. 문장 중간의 멈춤이 아니라 '종료 탭을 잊은 경우'를 잡기 위한 장치다.
+      if (voiceSilenceTimerRef.current !== null) window.clearTimeout(voiceSilenceTimerRef.current);
+      voiceSilenceTimerRef.current = window.setTimeout(
+        stopVoiceRecording,
+        VOICE_SILENCE_TIMEOUT_MS,
+      );
+    };
+
+    recognition.onerror = () => {
+      voiceErrorRef.current = '음성 인식에 실패했어요. 마이크 권한을 확인해 주세요.';
+    };
+
+    recognition.onend = () => {
+      clearVoiceTimers();
+      voiceRecognitionRef.current = null;
+      notifyRecordingEnd();
+
+      // iOS Safari 등에서 stop 후에도 최종 결과가 오지 않는 경우가 있어 마지막 중간 인식 결과로 대체한다.
+      const transcript = (voiceFinalRef.current || voiceInterimRef.current).trim();
+      setVoiceInterim('');
+      if (!transcript) {
+        setVoiceStage('idle');
+        setVoiceError(voiceErrorRef.current ?? '음성을 인식하지 못했어요. 다시 시도해 주세요.');
+        return;
+      }
+      setVoiceTranscript(transcript);
+      setVoiceStage('confirm');
+    };
+
+    voiceRecognitionRef.current = recognition;
+    recognition.start();
+    voiceMaxTimerRef.current = window.setTimeout(stopVoiceRecording, VOICE_MAX_DURATION_MS);
+  }
+
+  function toVoiceDraft(date: string | null, entry: VoiceEntryItem): VoiceDraft {
+    const match = entry.categoryMatch;
+    const type: TransactionType = match?.type ?? 'expense';
+    const matchedName = match?.matchedName ?? null;
+    const matched = matchedName
+      ? categories.find((c) => c.type === type && c.name === matchedName)
+      : undefined;
+
+    return {
+      itemName: entry.itemName,
+      date: date ?? todayISO(),
+      type,
+      amount: Math.max(0, Math.round(entry.amount)),
+      categoryId: matched?.id ?? null,
+      subCategoryId: null,
+      confidence: entry.confidence,
+      suggestion:
+        !matched && match?.suggestedName
+          ? {
+              name: match.suggestedName,
+              type,
+              subCategories: match.suggestedSubCategories ?? [],
+            }
+          : null,
+    };
+  }
+
+  function applyVoiceEntryToForm(date: string | null, entry: VoiceEntryItem) {
+    const draft = toVoiceDraft(date, entry);
+    setDate(draft.date);
+    setType(draft.type);
+    setAmountText(draft.amount > 0 ? formatAmount(draft.amount) : '');
+    setCategoryId(draft.categoryId);
+    setSubCategoryId(null);
+    setItemName(draft.itemName.slice(0, ITEM_NAME_MAX));
+    // 비고는 음성 자동 채움 대상이 아니다 (PRD 원칙 3).
+    setNote('');
+    setSource('voice');
+    setLowConfidence(draft.confidence < LOW_CONFIDENCE_THRESHOLD);
+    setNewCategorySuggestion(draft.suggestion);
+  }
+
+  async function handleVoiceConfirm() {
+    setVoiceStage('parsing');
+    setVoiceError(null);
+
+    try {
+      if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+        throw new Error('오프라인 상태입니다. 직접 입력해 주세요.');
+      }
+
+      const idToken = await auth.currentUser?.getIdToken();
+      if (!idToken) {
+        throw new Error('로그인 후 이용할 수 있습니다.');
+      }
+
+      const res = await fetch('/api/voice-entry', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${idToken}`,
+        },
+        body: JSON.stringify({
+          transcript: voiceTranscript,
+          categories: categories.map((c) => ({ name: c.name, type: c.type })),
+        }),
+      });
+
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        throw new Error(body?.error ?? `음성 분석에 실패했습니다. (오류 코드: ${res.status})`);
+      }
+
+      const result: VoiceEntryResult = await res.json();
+      const entries = result.entries ?? [];
+      if (entries.length === 0) {
+        throw new Error('말씀하신 내용에서 거래를 찾지 못했어요. 다시 말씀해 주세요.');
+      }
+
+      if (entries.length === 1) {
+        applyVoiceEntryToForm(result.date, entries[0]);
+        setVoiceStage('idle');
+        return;
+      }
+
+      setVoiceDrafts(entries.map((entry) => toVoiceDraft(result.date, entry)));
+      setVoiceStage('preview');
+    } catch (err) {
+      setVoiceStage('idle');
+      setVoiceError(
+        err instanceof Error ? err.message : '음성 분석에 실패했습니다. 직접 입력해 주세요.',
+      );
+    }
+  }
+
   async function handleReceiptSelect(e: ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     e.target.value = '';
     if (!file) return;
 
     setOcrError(null);
-    setOcrLowConfidence(false);
+    setVoiceError(null);
+    setLowConfidence(false);
     setNewCategorySuggestion(null);
     setOcrLoading(true);
 
@@ -230,9 +473,9 @@ export function TransactionSheet({
       const result: OcrResult = await res.json();
       if (result.date) setDate(result.date);
       if (result.totalAmount) setAmountText(formatAmount(result.totalAmount));
-      if (result.merchant) setNote(result.merchant.slice(0, NOTE_MAX));
+      if (result.merchant) setItemName(result.merchant.slice(0, ITEM_NAME_MAX));
       setSource('ocr');
-      setOcrLowConfidence(result.confidence < OCR_CONFIDENCE_THRESHOLD);
+      setLowConfidence(result.confidence < LOW_CONFIDENCE_THRESHOLD);
 
       const match = result.categoryMatch;
       if (match) {
@@ -269,25 +512,8 @@ export function TransactionSheet({
     setCreatingCategory(true);
     setError(null);
     try {
-      const order = categories.reduce((max, c) => Math.max(max, c.order), 0) + 1;
-      await addCategory({
-        name: newCategorySuggestion.name,
-        type: newCategorySuggestion.type,
-        color: pickCategoryColor(categories),
-        order,
-        subCategories: newCategorySuggestion.subCategories.map((name, i) => ({
-          id: `sub-${Date.now()}-${i}`,
-          name,
-        })),
-      });
-      const created = useAppStore
-        .getState()
-        .categories.find(
-          (c) => c.type === newCategorySuggestion.type && c.name === newCategorySuggestion.name,
-        );
+      const created = await createSuggestedCategory(newCategorySuggestion);
       if (created) {
-        // AI 가 제안하고 사용자가 한 번 확인해 만든 분류는 실수로 지워지지 않도록 기본 분류와 동일하게 삭제 보호한다.
-        await updateCategory(created.id, { isDefault: true });
         setType(created.type);
         setCategoryId(created.id);
       }
@@ -318,6 +544,7 @@ export function TransactionSheet({
         categoryId,
         subCategoryId,
         amount,
+        itemName: itemName.trim() || null,
         note: note.trim() || null,
         source,
       });
@@ -329,12 +556,103 @@ export function TransactionSheet({
     }
   }
 
+  if (voiceStage !== 'idle') {
+    return (
+      <Dialog open={open} onOpenChange={handleOpenChange}>
+        <DialogContent className="gap-4">
+          <DialogTitle>음성 입력</DialogTitle>
+          <DialogDescription className="sr-only">
+            말씀하신 내용을 인식해 거래 항목을 자동으로 채웁니다.
+          </DialogDescription>
+
+          {voiceStage === 'recording' && (
+            <div className="space-y-4">
+              <button
+                type="button"
+                aria-label="녹음 종료"
+                onClick={stopVoiceRecording}
+                className="mx-auto flex size-32 animate-pulse flex-col items-center justify-center gap-1 rounded-full bg-red-600 text-white"
+              >
+                <MicOff className="size-10" aria-hidden />
+                <span className="text-sm font-semibold">탭하면 종료</span>
+              </button>
+              <p className="text-center text-lg font-semibold">듣고 있어요…</p>
+              <div className="min-h-24 rounded-md border bg-muted/40 p-3 text-lg leading-relaxed">
+                {voiceTranscript || voiceInterim ? (
+                  <p>
+                    {voiceTranscript}
+                    <span className="text-muted-foreground">{voiceInterim}</span>
+                  </p>
+                ) : (
+                  <p className="text-muted-foreground">예: 오늘 지출 장보기 3만원</p>
+                )}
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                className="h-12 w-full text-base"
+                onClick={closeVoiceMode}
+              >
+                취소
+              </Button>
+            </div>
+          )}
+
+          {voiceStage === 'confirm' && (
+            <div className="space-y-4">
+              <p className="text-center text-lg font-semibold">이렇게 들었어요, 맞나요?</p>
+              <p className="rounded-md border bg-muted/40 p-4 text-xl leading-relaxed">
+                {voiceTranscript}
+              </p>
+              <div className="grid grid-cols-2 gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="h-14 text-base"
+                  onClick={startVoiceRecording}
+                >
+                  다시 말할게요
+                </Button>
+                <Button type="button" className="h-14 text-base" onClick={handleVoiceConfirm}>
+                  네, 맞아요
+                </Button>
+              </div>
+              <Button
+                type="button"
+                variant="ghost"
+                className="h-11 w-full text-base"
+                onClick={closeVoiceMode}
+              >
+                취소
+              </Button>
+            </div>
+          )}
+
+          {voiceStage === 'parsing' && (
+            <p className="py-12 text-center text-base text-muted-foreground">
+              말씀하신 내용을 분석하는 중…
+            </p>
+          )}
+
+          {voiceStage === 'preview' && (
+            <VoiceEntryPreview
+              drafts={voiceDrafts}
+              onDraftsChange={setVoiceDrafts}
+              onCancel={closeVoiceMode}
+              onDone={() => handleOpenChange(false)}
+            />
+          )}
+        </DialogContent>
+      </Dialog>
+    );
+  }
+
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent className="gap-4">
         <DialogTitle>거래 입력</DialogTitle>
         <DialogDescription className="sr-only">
-          날짜, 수입/지출, 금액, 분류, 비고를 입력해 거래를 기록합니다.
+          날짜, 수입/지출, 금액, 분류, 구입 항목명, 비고를 입력해 거래를 기록합니다.
         </DialogDescription>
 
         <div className="space-y-4">
@@ -355,7 +673,7 @@ export function TransactionSheet({
               className="hidden"
               onChange={handleReceiptSelect}
             />
-            <div className="grid grid-cols-2 gap-2">
+            <div className={cn('grid gap-2', speechSupported ? 'grid-cols-3' : 'grid-cols-2')}>
               <Button
                 type="button"
                 variant="outline"
@@ -364,7 +682,7 @@ export function TransactionSheet({
                 onClick={() => cameraInputRef.current?.click()}
               >
                 <Camera className="size-5" aria-hidden />
-                카메라로 촬영
+                카메라 촬영
               </Button>
               <Button
                 type="button"
@@ -374,18 +692,30 @@ export function TransactionSheet({
                 onClick={() => receiptInputRef.current?.click()}
               >
                 <ImagePlus className="size-5" aria-hidden />
-                갤러리에서 선택
+                갤러리 선택
               </Button>
+              {speechSupported && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="h-12 text-base"
+                  disabled={ocrLoading}
+                  onClick={startVoiceRecording}
+                >
+                  <Mic className="size-5" aria-hidden />
+                  음성 입력
+                </Button>
+              )}
             </div>
             {ocrLoading && (
               <p className="text-sm text-muted-foreground">영수증을 분석하는 중…</p>
             )}
-            {ocrError && (
+            {(ocrError || voiceError) && (
               <p role="alert" className="text-sm font-medium text-destructive">
-                {ocrError}
+                {ocrError ?? voiceError}
               </p>
             )}
-            {ocrLowConfidence && (
+            {lowConfidence && (
               <p className="flex items-center gap-1.5 text-sm font-medium text-amber-600 dark:text-amber-400">
                 <AlertTriangle className="size-4 shrink-0" aria-hidden />
                 인식 결과의 신뢰도가 낮습니다. 자동 입력된 값을 확인해 주세요.
@@ -525,6 +855,20 @@ export function TransactionSheet({
             }}
             onSubCategoryChange={setSubCategoryId}
           />
+
+          <section className="space-y-2">
+            <label htmlFor="tx-item-name" className="text-sm font-medium">
+              구입 항목명
+            </label>
+            <Input
+              id="tx-item-name"
+              value={itemName}
+              maxLength={ITEM_NAME_MAX}
+              placeholder="예: 돼지고기"
+              onChange={(e) => setItemName(e.target.value)}
+              className="h-12 text-base"
+            />
+          </section>
 
           <section className="space-y-2">
             <label htmlFor="tx-note" className="text-sm font-medium">

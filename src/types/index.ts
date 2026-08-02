@@ -1,7 +1,7 @@
 import type { Timestamp } from 'firebase/firestore';
 
 export type TransactionType = 'income' | 'expense';
-export type TransactionSource = 'manual' | 'ocr' | 'import';
+export type TransactionSource = 'manual' | 'ocr' | 'import' | 'voice';
 
 export interface Transaction {
   id: string;
@@ -10,6 +10,7 @@ export interface Transaction {
   categoryId: string;
   subCategoryId: string | null;
   amount: number;
+  itemName: string | null;
   note: string | null;
   source: TransactionSource;
   createdAt: Timestamp | null;
@@ -58,4 +59,18 @@ export interface OcrResult {
   items: OcrReceiptItem[];
   confidence: number;
   categoryMatch: OcrCategoryMatch;
+}
+
+export interface VoiceEntryItem {
+  /** 발화된 항목명 원문 (예: "국민연금"). */
+  itemName: string;
+  amount: number;
+  categoryMatch: OcrCategoryMatch;
+  /** 항목별 개별 신뢰도 0~1. */
+  confidence: number;
+}
+
+export interface VoiceEntryResult {
+  date: string | null;
+  entries: VoiceEntryItem[];
 }

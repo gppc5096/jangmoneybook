@@ -83,7 +83,7 @@ export default function Home() {
                       <div className="flex items-center gap-2">
                         <CategoryBadge name={label.name} color={label.color} />
                         <span className="truncate text-sm text-muted-foreground">
-                          {tx.note ?? ''}
+                          {tx.itemName ?? ''}
                         </span>
                       </div>
                       <p className="mt-1 text-xs text-muted-foreground">{tx.date}</p>
