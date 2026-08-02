@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Check, ChevronLeft, ChevronRight, Pencil, Trash2, X } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -67,6 +67,8 @@ export default function RecordsPage() {
   const [yearSelectOpen, setYearSelectOpen] = useState(false);
   const [deleteTargetId, setDeleteTargetId] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [pageSize, setPageSize] = useState(10);
+  const [page, setPage] = useState(1);
 
   function openMonthPicker() {
     setPickerYear(Number(month.slice(0, 4)));
@@ -100,6 +102,18 @@ export default function RecordsPage() {
       return true;
     });
   }, [monthTransactions, keyword, typeFilter, categoryFilter]);
+
+  // 필터·페이지 크기가 바뀌면 이전 페이지에 머물러 빈 화면이 뜨지 않도록 1페이지로 되돌린다.
+  useEffect(() => {
+    setPage(1);
+  }, [month, keyword, typeFilter, categoryFilter, pageSize]);
+
+  const pageCount = Math.max(1, Math.ceil(visible.length / pageSize));
+  const currentPage = Math.min(page, pageCount);
+  const paginated = useMemo(
+    () => visible.slice((currentPage - 1) * pageSize, currentPage * pageSize),
+    [visible, currentPage, pageSize],
+  );
 
   const deleteTarget = useMemo(
     () => transactions.find((t) => t.id === deleteTargetId) ?? null,
@@ -357,7 +371,26 @@ export default function RecordsPage() {
         </CardContent>
       </Card>
 
-      <div className="space-y-2">
+      <div className="flex gap-2">
+        {(['all', 'income', 'expense'] as const).map((value) => (
+          <button
+            key={value}
+            type="button"
+            aria-pressed={typeFilter === value}
+            onClick={() => setTypeFilter(value)}
+            className={cn(
+              'h-11 flex-1 rounded-md border text-sm font-medium transition-colors',
+              typeFilter === value
+                ? 'border-primary bg-primary text-primary-foreground'
+                : 'border-input',
+            )}
+          >
+            {value === 'all' ? '전체' : value === 'income' ? '수입' : '지출'}
+          </button>
+        ))}
+      </div>
+
+      <div className="grid grid-cols-2 gap-2">
         <Input
           value={keyword}
           onChange={(e) => setKeyword(e.target.value)}
@@ -365,31 +398,16 @@ export default function RecordsPage() {
           aria-label="항목명 검색"
           className="h-11"
         />
-        <div className="flex gap-2">
-          {(['all', 'income', 'expense'] as const).map((value) => (
-            <button
-              key={value}
-              type="button"
-              aria-pressed={typeFilter === value}
-              onClick={() => setTypeFilter(value)}
-              className={cn(
-                'h-11 flex-1 rounded-md border text-sm font-medium transition-colors',
-                typeFilter === value
-                  ? 'border-primary bg-primary text-primary-foreground'
-                  : 'border-input',
-              )}
-            >
-              {value === 'all' ? '전체' : value === 'income' ? '수입' : '지출'}
-            </button>
-          ))}
-        </div>
         <select
           value={categoryFilter}
           onChange={(e) => setCategoryFilter(e.target.value)}
-          aria-label="분류 필터"
-          className="h-11 w-full rounded-md border border-input bg-background px-3 text-sm"
+          aria-label="분류 검색"
+          className={cn(
+            'h-11 w-full rounded-md border border-input bg-background px-3 py-2 text-base ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 md:text-sm',
+            categoryFilter === 'all' ? 'text-muted-foreground' : 'text-foreground',
+          )}
         >
-          <option value="all">모든 분류</option>
+          <option value="all">모든 분류 검색</option>
           {categories.map((c) => (
             <option key={c.id} value={c.id}>
               {c.name}
@@ -404,7 +422,7 @@ export default function RecordsPage() {
         </p>
       ) : (
         <ul className="divide-y rounded-xl border">
-          {visible.map((tx) => {
+          {paginated.map((tx) => {
             const label = categoryLabel(categories, tx.categoryId);
             const sub = subCategoryName(categories, tx.categoryId, tx.subCategoryId);
 
@@ -562,6 +580,49 @@ export default function RecordsPage() {
             );
           })}
         </ul>
+      )}
+
+      {visible.length > 0 && (
+        <div className="flex items-center justify-between gap-2">
+          <select
+            value={pageSize}
+            onChange={(e) => setPageSize(Number(e.target.value))}
+            aria-label="페이지당 표시 개수"
+            className="h-10 rounded-md border border-input bg-background px-2 text-sm"
+          >
+            <option value={10}>10개</option>
+            <option value={20}>20개</option>
+            <option value={30}>30개</option>
+          </select>
+
+          <div className="flex items-center gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="icon"
+              className="size-10 shrink-0"
+              aria-label="이전 페이지"
+              disabled={currentPage <= 1}
+              onClick={() => setPage((p) => Math.max(1, p - 1))}
+            >
+              <ChevronLeft className="size-4" aria-hidden />
+            </Button>
+            <span className="text-sm tabular-nums text-muted-foreground">
+              {currentPage} / {pageCount}
+            </span>
+            <Button
+              type="button"
+              variant="outline"
+              size="icon"
+              className="size-10 shrink-0"
+              aria-label="다음 페이지"
+              disabled={currentPage >= pageCount}
+              onClick={() => setPage((p) => Math.min(pageCount, p + 1))}
+            >
+              <ChevronRight className="size-4" aria-hidden />
+            </Button>
+          </div>
+        </div>
       )}
     </div>
   );
