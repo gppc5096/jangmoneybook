@@ -1,14 +1,23 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { CONTENT_WIDTH_CLASS } from '@/lib/layout';
 
 const UPDATE_CHECK_INTERVAL_MS = 60 * 60 * 1000;
+const RELOAD_FALLBACK_MS = 4000;
 
 export function UpdateToast() {
   const [waitingWorker, setWaitingWorker] = useState<ServiceWorker | null>(null);
+  const [activating, setActivating] = useState(false);
+  const reloadedRef = useRef(false);
+
+  function reloadOnce() {
+    if (reloadedRef.current) return;
+    reloadedRef.current = true;
+    window.location.reload();
+  }
 
   useEffect(() => {
     if (!('serviceWorker' in navigator)) return;
@@ -46,21 +55,24 @@ export function UpdateToast() {
       document.addEventListener('visibilitychange', handleVisibility);
     });
 
-    let reloaded = false;
-    function handleControllerChange() {
-      if (reloaded) return;
-      reloaded = true;
-      window.location.reload();
-    }
-    navigator.serviceWorker.addEventListener('controllerchange', handleControllerChange);
+    navigator.serviceWorker.addEventListener('controllerchange', reloadOnce);
 
     return () => {
       cancelled = true;
       if (intervalId !== undefined) window.clearInterval(intervalId);
       document.removeEventListener('visibilitychange', handleVisibility);
-      navigator.serviceWorker.removeEventListener('controllerchange', handleControllerChange);
+      navigator.serviceWorker.removeEventListener('controllerchange', reloadOnce);
     };
   }, []);
+
+  function handleUpdateClick() {
+    if (!waitingWorker) return;
+    setActivating(true);
+    waitingWorker.postMessage({ type: 'SKIP_WAITING' });
+    // iOS Safari(홈 화면 PWA)는 controllerchange가 지연되거나 아예 안 오는 경우가 있어,
+    // 일정 시간 안에 새로고침이 안 되면 강제로 새로고침해 탭이 먹통처럼 보이지 않게 한다.
+    window.setTimeout(reloadOnce, RELOAD_FALLBACK_MS);
+  }
 
   if (!waitingWorker) return null;
 
@@ -72,10 +84,11 @@ export function UpdateToast() {
           type="button"
           size="sm"
           className="h-9 shrink-0"
-          onClick={() => waitingWorker.postMessage({ type: 'SKIP_WAITING' })}
+          disabled={activating}
+          onClick={handleUpdateClick}
         >
-          <RefreshCw className="size-4" aria-hidden />
-          업데이트
+          <RefreshCw className={activating ? 'size-4 animate-spin' : 'size-4'} aria-hidden />
+          {activating ? '업데이트하는 중…' : '업데이트'}
         </Button>
       </div>
     </div>
