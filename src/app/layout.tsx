@@ -4,6 +4,7 @@ import "./globals.css";
 import { AppInit } from "@/components/AppInit";
 import { BottomNav } from "@/components/BottomNav";
 import { Fab } from "@/components/Fab";
+import { UpdateToast } from "@/components/UpdateToast";
 import { CONTENT_WIDTH_CLASS } from "@/lib/layout";
 
 const geistSans = Geist({
@@ -52,6 +53,7 @@ export default function RootLayout({
         <AppInit>
           <main className={`min-h-dvh px-4 pb-24 pt-6 ${CONTENT_WIDTH_CLASS}`}>{children}</main>
           <Fab />
+          <UpdateToast />
           <BottomNav />
         </AppInit>
       </body>
