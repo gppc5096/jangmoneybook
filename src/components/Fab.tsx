@@ -37,6 +37,7 @@ export function Fab() {
   const [open, setOpen] = useState(false);
   const [position, setPosition] = useState<Position | null>(null);
   const draggingRef = useRef(false);
+  const pointerActiveRef = useRef(false);
   const startRef = useRef({ x: 0, y: 0, posX: 0, posY: 0 });
 
   useEffect(() => {
@@ -59,12 +60,13 @@ export function Fab() {
   function handlePointerDown(e: PointerEvent<HTMLButtonElement>) {
     if (!position) return;
     draggingRef.current = false;
+    pointerActiveRef.current = true;
     startRef.current = { x: e.clientX, y: e.clientY, posX: position.x, posY: position.y };
     e.currentTarget.setPointerCapture(e.pointerId);
   }
 
   function handlePointerMove(e: PointerEvent<HTMLButtonElement>) {
-    if (!position) return;
+    if (!position || !pointerActiveRef.current) return;
     const dx = e.clientX - startRef.current.x;
     const dy = e.clientY - startRef.current.y;
     if (!draggingRef.current && Math.hypot(dx, dy) > DRAG_THRESHOLD) {
@@ -79,6 +81,7 @@ export function Fab() {
 
   function handlePointerUp(e: PointerEvent<HTMLButtonElement>) {
     e.currentTarget.releasePointerCapture(e.pointerId);
+    pointerActiveRef.current = false;
     if (draggingRef.current) {
       draggingRef.current = false;
       if (position) window.localStorage.setItem(POSITION_KEY, JSON.stringify(position));
