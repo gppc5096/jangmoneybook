@@ -71,7 +71,7 @@ type SpeechRecognitionLike = {
   stop: () => void;
   abort: () => void;
   onresult: ((event: { results: ArrayLike<SpeechResultLike> }) => void) | null;
-  onerror: (() => void) | null;
+  onerror: ((event: { error?: string }) => void) | null;
   onend: (() => void) | null;
 };
 
@@ -155,6 +155,8 @@ export function TransactionSheet({
   const voiceMaxTimerRef = useRef<number | null>(null);
   const voiceFinalRef = useRef('');
   const voiceInterimRef = useRef('');
+  const voiceSessionFinalRef = useRef('');
+  const voiceStoppingRef = useRef(false);
   const voiceErrorRef = useRef<string | null>(null);
 
   useEffect(() => {
@@ -249,12 +251,14 @@ export function TransactionSheet({
 
   function stopVoiceRecording() {
     clearVoiceTimers();
+    voiceStoppingRef.current = true;
     voiceRecognitionRef.current?.stop();
   }
 
   /** 음성 입력 모드를 닫고 폼으로 돌아간다. 진행 중이던 인식 결과는 버린다. */
   function closeVoiceMode() {
     clearVoiceTimers();
+    voiceStoppingRef.current = true;
     const recognition = voiceRecognitionRef.current;
     if (recognition) {
       recognition.onresult = null;
@@ -265,6 +269,7 @@ export function TransactionSheet({
     }
     voiceFinalRef.current = '';
     voiceInterimRef.current = '';
+    voiceSessionFinalRef.current = '';
     setVoiceTranscript('');
     setVoiceInterim('');
     setVoiceDrafts([]);
@@ -276,6 +281,7 @@ export function TransactionSheet({
     if (!Ctor) return;
 
     closeVoiceMode();
+    voiceStoppingRef.current = false;
     voiceErrorRef.current = null;
     setVoiceError(null);
     setOcrError(null);
@@ -283,7 +289,10 @@ export function TransactionSheet({
 
     const recognition = new Ctor();
     recognition.lang = 'ko-KR';
-    recognition.continuous = true;
+    // Android Chrome은 continuous:true 상태에서 짧은 무음마다 인식 세션을 몰래 재시작하며
+    // 이미 나온 앞부분을 매번 새 최종 결과로 다시 내보내 "오늘오늘오늘..." 처럼 중복된다.
+    // continuous:false로 짧게 끊어 듣고, 세션이 자연 종료될 때마다 직접 재시작해 이어붙인다.
+    recognition.continuous = false;
     recognition.interimResults = true;
     recognition.maxAlternatives = 1;
 
@@ -296,9 +305,8 @@ export function TransactionSheet({
         if (result.isFinal) final += text;
         else interim += text;
       }
-      voiceFinalRef.current = final;
+      if (final) voiceSessionFinalRef.current = final;
       voiceInterimRef.current = interim;
-      setVoiceTranscript(final);
       setVoiceInterim(interim);
 
       // 말이 시작된 뒤부터만 무음 타임아웃을 건다. 문장 중간의 멈춤이 아니라 '종료 탭을 잊은 경우'를 잡기 위한 장치다.
@@ -309,16 +317,35 @@ export function TransactionSheet({
       );
     };
 
-    recognition.onerror = () => {
+    recognition.onerror = (event) => {
+      // 'no-speech'는 세션이 잠깐 끊긴 것뿐이라 onend 에서 조용히 재시작된다.
+      if (event?.error === 'no-speech') return;
       voiceErrorRef.current = '음성 인식에 실패했어요. 마이크 권한을 확인해 주세요.';
     };
 
     recognition.onend = () => {
+      if (voiceSessionFinalRef.current) {
+        voiceFinalRef.current = `${voiceFinalRef.current}${
+          voiceFinalRef.current ? ' ' : ''
+        }${voiceSessionFinalRef.current}`.trim();
+        voiceSessionFinalRef.current = '';
+        setVoiceTranscript(voiceFinalRef.current);
+      }
+
+      if (!voiceStoppingRef.current) {
+        // 사용자가 아직 멈추지 않았다면, continuous:false 로 인해 자연 종료된 세션을 이어서 듣는다.
+        try {
+          recognition.start();
+          return;
+        } catch {
+          // 재시작 실패 시 아래 종료 처리로 넘어간다.
+        }
+      }
+
       clearVoiceTimers();
       voiceRecognitionRef.current = null;
       notifyRecordingEnd();
 
-      // iOS Safari 등에서 stop 후에도 최종 결과가 오지 않는 경우가 있어 마지막 중간 인식 결과로 대체한다.
       const transcript = (voiceFinalRef.current || voiceInterimRef.current).trim();
       setVoiceInterim('');
       if (!transcript) {
