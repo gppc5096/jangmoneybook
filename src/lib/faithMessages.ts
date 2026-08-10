@@ -31,13 +31,13 @@ export function buildGreetingLine(displayName: string, message: string) {
 }
 
 export function pickFaithMessage(exclude?: string): string {
-  if (FAITH_MESSAGES.length === 0) return '창조주 하나님께서 지켜주십니다.';
-  if (FAITH_MESSAGES.length === 1) return FAITH_MESSAGES[0];
+  const pick = () =>
+    FAITH_MESSAGES[Math.floor(Math.random() * FAITH_MESSAGES.length)]!;
 
-  let next = FAITH_MESSAGES[Math.floor(Math.random() * FAITH_MESSAGES.length)];
+  let next = pick();
   // 직전과 같으면 한 번 더 뽑아 체감 변화를 키운다.
   if (exclude && next === exclude) {
-    next = FAITH_MESSAGES[Math.floor(Math.random() * FAITH_MESSAGES.length)];
+    next = pick();
   }
   return next;
 }
