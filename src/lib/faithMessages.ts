@@ -1,0 +1,43 @@
+/**
+ * 복음·신앙 인사 문장 풀.
+ * API 호출 없이 실행마다 랜덤 1개를 골라 "생성되는 듯한" 변화를 준다.
+ */
+const FAITH_MESSAGES = [
+  '창조주 하나님께서 지켜주십니다.',
+  '예수 그리스도의 사랑으로 하루를 채워 주십니다.',
+  '하나님 아버지의 은혜가 함께하십니다.',
+  '성령께서 평안과 지혜로 인도하십니다.',
+  '십자가의 은혜가 오늘도 충분합니다.',
+  '주님께서 발걸음을 든든히 붙들어 주십니다.',
+  '말씀으로 힘을 주시고 소망을 심어 주십니다.',
+  '하나님의 선하심이 하루를 인도하십니다.',
+  '기도 응답의 하나님이 곁에 계십니다.',
+  '예수님의 이름으로 복을 내려 주십니다.',
+  '하늘 아버지께서 필요를 아시고 채워 주십니다.',
+  '주의 인자하심이 아침마다 새롭습니다.',
+  '믿음의 길 위에서 하나님이 동행하십니다.',
+  '구원의 기쁨이 마음에 넘치게 하십니다.',
+  '주 안에서 쉼과 감사를 누리게 하십니다.',
+  '하나님의 평강이 마음과 생각을 지키십니다.',
+  '사랑 많으신 주님이 오늘을 지켜 주십니다.',
+  '복음의 빛이 가정에 비춥니다.',
+  '은혜 위에 은혜를 더해 주십니다.',
+  '주님께서 길을 여시고 형통케 하십니다.',
+] as const;
+
+/** 고정 인사 앞부분. 이름은 호출 측에서 끼워 넣는다. */
+export function buildGreetingLine(displayName: string, message: string) {
+  return `오늘도 '${displayName}' 님을 ${message}`;
+}
+
+export function pickFaithMessage(exclude?: string): string {
+  if (FAITH_MESSAGES.length === 0) return '창조주 하나님께서 지켜주십니다.';
+  if (FAITH_MESSAGES.length === 1) return FAITH_MESSAGES[0];
+
+  let next = FAITH_MESSAGES[Math.floor(Math.random() * FAITH_MESSAGES.length)];
+  // 직전과 같으면 한 번 더 뽑아 체감 변화를 키운다.
+  if (exclude && next === exclude) {
+    next = FAITH_MESSAGES[Math.floor(Math.random() * FAITH_MESSAGES.length)];
+  }
+  return next;
+}
